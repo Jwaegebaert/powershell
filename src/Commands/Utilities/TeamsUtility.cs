@@ -1,6 +1,7 @@
 ﻿using Microsoft.SharePoint.Client;
 using PnP.PowerShell.Commands.Base;
 using PnP.PowerShell.Commands.Enums;
+using PnP.PowerShell.Commands.Model;
 using PnP.PowerShell.Commands.Model.Graph;
 using PnP.PowerShell.Commands.Model.Teams;
 using PnP.PowerShell.Commands.Utilities.REST;
@@ -120,7 +121,7 @@ namespace PnP.PowerShell.Commands.Utilities
             }
         }
 
-        public static async Task<Team> NewTeamAsync(string accessToken, HttpClient httpClient, string groupId, string displayName, string description, string classification, string mailNickname, GroupVisibility visibility, TeamCreationInformation teamCI, string[] owners, string[] members, TeamsTemplateType templateType = TeamsTemplateType.None, TeamResourceBehaviorOptions?[] resourceBehaviorOptions = null)
+        public static async Task<Team> NewTeamAsync(string accessToken, HttpClient httpClient, string groupId, string displayName, string description, string classification, string mailNickname, GroupVisibility visibility, TeamCreationInformation teamCI, string[] owners, string[] members, Guid[] sensitivityLabels, TeamsTemplateType templateType = TeamsTemplateType.None, TeamResourceBehaviorOptions?[] resourceBehaviorOptions = null)
         {
             Group group = null;
             Team returnTeam = null;
@@ -128,7 +129,7 @@ namespace PnP.PowerShell.Commands.Utilities
             // Create the Group
             if (string.IsNullOrEmpty(groupId))
             {
-                group = await CreateGroupAsync(accessToken, httpClient, displayName, description, classification, mailNickname, visibility, owners, templateType, resourceBehaviorOptions);
+                group = await CreateGroupAsync(accessToken, httpClient, displayName, description, classification, mailNickname, visibility, owners, sensitivityLabels, templateType, resourceBehaviorOptions);
                 bool wait = true;
                 int iterations = 0;
                 while (wait)
@@ -236,7 +237,7 @@ namespace PnP.PowerShell.Commands.Utilities
             return $"users/{escapedUpn}";
         }
 
-        private static async Task<Group> CreateGroupAsync(string accessToken, HttpClient httpClient, string displayName, string description, string classification, string mailNickname, GroupVisibility visibility, string[] owners, TeamsTemplateType templateType = TeamsTemplateType.None, TeamResourceBehaviorOptions?[] resourceBehaviorOptions = null)
+        private static async Task<Group> CreateGroupAsync(string accessToken, HttpClient httpClient, string displayName, string description, string classification, string mailNickname, GroupVisibility visibility, string[] owners, Guid[] sensitivityLabels, TeamsTemplateType templateType = TeamsTemplateType.None, TeamResourceBehaviorOptions?[] resourceBehaviorOptions = null)
         {
             // When creating a group, we always need an owner, thus we'll try to define it from the passed in owners array
             string ownerId = null;
@@ -309,6 +310,23 @@ namespace PnP.PowerShell.Commands.Utilities
                     teamResourceBehaviorOptionsValue.Add(resourceBehaviorOptions[i].ToString());
                 }
                 group.ResourceBehaviorOptions = teamResourceBehaviorOptionsValue;
+            }
+
+            if (sensitivityLabels!= null && sensitivityLabels.Length > 0)
+            {
+                var assignedLabels = new List<AssignedLabels>();
+                foreach (var label in sensitivityLabels)
+                {
+                    if (!Guid.Empty.Equals(label))
+                    {
+                        assignedLabels.Add(new AssignedLabels
+                        {
+                            labelId = label.ToString()
+                        });
+                    }                    
+                }
+
+                group.AssignedLabels = assignedLabels;
             }
 
             switch (templateType)
@@ -610,6 +628,62 @@ namespace PnP.PowerShell.Commands.Utilities
             }
         }
 
+        public static async Task PostMessageAsync(HttpClient httpClient, string accessToken, string groupId, string channelId, TeamChannelMessage message)
+        {
+            await GraphHelper.PostAsync(httpClient, $"v1.0/teams/{groupId}/channels/{channelId}/messages", message, accessToken);
+        }
+
+        public static async Task<TeamChannelMessage> GetMessageAsync(HttpClient httpClient, string accessToken, string groupId, string channelId, string messageId)
+        {
+            return await GraphHelper.GetAsync<TeamChannelMessage>(httpClient, $"v1.0/teams/{groupId}/channels/{channelId}/messages/{messageId}", accessToken);
+        }
+
+        public static async Task<List<TeamChannelMessage>> GetMessagesAsync(HttpClient httpClient, string accessToken, string groupId, string channelId, bool includeDeleted = false)
+        {
+            List<TeamChannelMessage> messages = new List<TeamChannelMessage>();
+            var collection = await GraphHelper.GetResultCollectionAsync<TeamChannelMessage>(httpClient, $"v1.0/teams/{groupId}/channels/{channelId}/messages", accessToken);
+            messages.AddRange(collection);
+
+            if (includeDeleted)
+            {
+                return messages;
+            }
+            else
+            {
+                return messages.Where(m => !m.DeletedDateTime.HasValue).ToList();
+            }
+        }
+
+        /// <summary>
+        /// List all the replies to a message in a channel of a team.
+        /// </summary>
+        public static async Task<List<TeamChannelMessageReply>> GetMessageRepliesAsync(HttpClient httpClient, string accessToken, string groupId, string channelId, string messageId, bool includeDeleted = false)
+        {
+            var replies = await GraphHelper.GetResultCollectionAsync<TeamChannelMessageReply>(httpClient, $"v1.0/teams/{groupId}/channels/{channelId}/messages/{messageId}/replies", accessToken);
+
+            return includeDeleted ? replies.ToList() : replies.Where(r => r.DeletedDateTime.HasValue).ToList();
+        }
+
+        /// <summary>
+        /// Get a specific reply of a message in a channel of a team.
+        /// </summary>
+        public static async Task<TeamChannelMessageReply> GetMessageReplyAsync(HttpClient httpClient, string accessToken, string groupId, string channelId, string messageId, string replyId)
+        {
+            return await GraphHelper.GetAsync<TeamChannelMessageReply>(httpClient, $"v1.0/teams/{groupId}/channels/{channelId}/messages/{messageId}/replies/{replyId}", accessToken);
+        }
+
+        public static async Task<TeamChannel> UpdateChannelAsync(HttpClient httpClient, string accessToken, string groupId, string channelId, TeamChannel channel)
+        {
+            return await GraphHelper.PatchAsync(httpClient, accessToken, $"beta/teams/{groupId}/channels/{channelId}", channel);
+        }
+        #endregion
+
+        #region Channel member
+
+        /// <summary>
+        /// Get specific memberbership of user who has access to a certain Microsoft Teams channel.
+        /// </summary>
+        /// <returns>User channel membership.</returns>
         public static async Task<TeamChannelMember> GetChannelMemberAsync(HttpClient httpClient, string accessToken, string groupId, string channelId, string membershipId)
         {
             // Currently the Graph request to get a membership by id fails (v1.0/teams/{groupId}/channels/{channelId}/members/{membershipId}).
@@ -619,6 +693,10 @@ namespace PnP.PowerShell.Commands.Utilities
             return memberships.FirstOrDefault(m => membershipId.Equals(m.Id));
         }
 
+        /// <summary>
+        /// Get list of all memberships of a certain Microsoft Teams channel.
+        /// </summary>
+        /// <returns>List of memberships.</returns>
         public static async Task<IEnumerable<TeamChannelMember>> GetChannelMembersAsync(HttpClient httpClient, string accessToken, string groupId, string channelId, string role = null)
         {
             var collection = await GraphHelper.GetResultCollectionAsync<TeamChannelMember>(httpClient, $"v1.0/teams/{groupId}/channels/{channelId}/members", accessToken);
@@ -632,7 +710,12 @@ namespace PnP.PowerShell.Commands.Utilities
             return collection;
         }
 
-        public static async Task<TeamChannelMember> AddChannelUserAsync(HttpClient httpClient, string accessToken, string groupId, string channelId, string upn, string role)
+        /// <summary>
+        /// Add specified member to a specified Microsoft Teams channel with a certain role.
+        /// </summary>
+        /// <param name="role">User role, valid values: Owner, Member</param>
+        /// <returns>Added membership.</returns>
+        public static async Task<TeamChannelMember> AddChannelMemberAsync(HttpClient httpClient, string accessToken, string groupId, string channelId, string upn, string role)
         {
             var channelMember = new TeamChannelMember
             {
@@ -640,37 +723,42 @@ namespace PnP.PowerShell.Commands.Utilities
             };
 
             // The role for the user. Must be owner or empty.
-            if (role.Equals("Owner"))
+            if (role.Equals("owner", StringComparison.OrdinalIgnoreCase))
                 channelMember.Roles.Add("owner");
 
             return await GraphHelper.PostAsync(httpClient, $"v1.0/teams/{groupId}/channels/{channelId}/members", channelMember, accessToken);
         }
 
-        public static async Task PostMessageAsync(HttpClient httpClient, string accessToken, string groupId, string channelId, TeamChannelMessage message)
+        /// <summary>
+        /// Remove specified member of a specified Microsoft Teams channel.
+        /// </summary>
+        /// <returns>True when removal succeeded, else false.</returns>
+        public static async Task<HttpResponseMessage> DeleteChannelMemberAsync(HttpClient httpClient, string accessToken, string groupId, string channelId, string membershipId)
         {
-            await GraphHelper.PostAsync(httpClient, $"v1.0/teams/{groupId}/channels/{channelId}/messages", message, accessToken);
+            return await GraphHelper.DeleteAsync(httpClient, $"v1.0/teams/{groupId}/channels/{channelId}/members/{membershipId}", accessToken);
         }
 
-        public static async Task<List<TeamChannelMessage>> GetMessagesAsync(HttpClient httpClient, string accessToken, string groupId, string channelId, bool includeDeleted = false)
+        /// <summary>
+        /// Update the role of a specific member of a Microsoft Teams channel.
+        /// </summary>
+        /// <returns>Updated membership object.</returns>
+        public static async Task<TeamChannelMember> UpdateChannelMemberAsync(HttpClient httpClient, string accessToken, string groupId, string channelId, string membershipId, string role)
         {
-            List<TeamChannelMessage> messages = new List<TeamChannelMessage>();
-            var collection = await GraphHelper.GetResultCollectionAsync<TeamChannelMessage>(httpClient, $"beta/teams/{groupId}/channels/{channelId}/messages", accessToken);
-            messages.AddRange(collection);
+            var channelMember = new TeamChannelMember();
 
-            if (includeDeleted)
-            {
-                return messages;
-            }
-            else
-            {
-                return messages.Where(m => !m.DeletedDateTime.HasValue).ToList();
-            }
+            // User role. Empty for member, 'owner' for owner.
+            if (role.Equals("owner", StringComparison.OrdinalIgnoreCase))
+                channelMember.Roles.Add("owner");
+
+            return await GraphHelper.PatchAsync(httpClient, accessToken, $"v1.0/teams/{groupId}/channels/{channelId}/members/{membershipId}", channelMember);
         }
 
-        public static async Task<TeamChannel> UpdateChannelAsync(HttpClient httpClient, string accessToken, string groupId, string channelId, TeamChannel channel)
+        public static async Task<TeamsChannelFilesFolder> GetChannelsFilesFolderAsync(HttpClient httpClient, string accessToken, string groupId, string channelId)
         {
-            return await GraphHelper.PatchAsync(httpClient, accessToken, $"beta/teams/{groupId}/channels/{channelId}", channel);
+            var collection = await GraphHelper.GetAsync<TeamsChannelFilesFolder>(httpClient, $"v1.0/teams/{groupId}/channels/{channelId}/filesFolder", accessToken);
+            return collection;
         }
+
         #endregion
 
         #region Tabs
