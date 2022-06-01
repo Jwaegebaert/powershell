@@ -91,7 +91,7 @@
 </ul>
 <p>Returns all or a specific Planner plan for a Microsoft 365 Group.</p>
 <h2 id="syntax">SYNTAX</h2>
-<pre><code class="lang-powershell">Get-PnPPlannerPlan -Group &lt;PlannerGroupPipeBind&gt; [-Identity &lt;PlannerPlanPipeBind&gt;] [-ResolveUserDisplayNames]
+<pre><code class="lang-powershell">Get-PnPPlannerPlan -Group &lt;PlannerGroupPipeBind&gt; [-Identity &lt;PlannerPlanPipeBind&gt;] [-ResolveIdentities]
   [&lt;CommonParameters&gt;]
 </code></pre>
 <h2 id="description">DESCRIPTION</h2>
@@ -130,8 +130,8 @@ Default value: None
 Accept pipeline input: False
 Accept wildcard characters: False
 </code></pre>
-<h3 id="-resolveuserdisplaynames">-ResolveUserDisplayNames</h3>
-<p>{{ Fill ResolveUserDisplayNames Description }}</p>
+<h3 id="-resolveidentities">-ResolveIdentities</h3>
+<p>Show user display names instead of user IDs.</p>
 <pre><code class="lang-yaml">Type: SwitchParameter
 Parameter Sets: (All)
 Aliases:
